@@ -7,11 +7,11 @@ from controllers.main_ctrl import *
 # os.system('cp /app/files_to_host/config.txt /app/config_host')
 
 device = XBeeDevice("COM3", 9600)
-remote = RemoteXBeeDevice(device, XBee64BitAddress.from_hex_string("0013A20040BA105F"))
+remote1 = RemoteXBeeDevice(device, XBee64BitAddress.from_hex_string("0013A20040BA105F"))
 
 validate_open_device(device)
+# device.send_data(remote1, 'spamm')
 
-while True:
-    threading.Thread(target=receive_frame_xbee, args=(device, remote)).start()
+receive_thread = threading.Thread(target=receive_frame_xbee, args=(device, remote1,))
+receive_thread.run()
 
-# send_frame_xbee(device, remote, "Hola")
