@@ -39,14 +39,12 @@ def send_to_redis(data):
 
 
 def receive_from_redis(device, remote_device):
+    subscriber = redis.Redis(host = 'localhost', port = 6379)
+    channel = 'test'
+    p = subscriber.pubsub()
+    p.subscribe(channel)
     while True:
-        subscriber = redis.Redis(host = 'localhost', port = 6379)
-        channel = 'test'
-        p = subscriber.pubsub()
-        p.subscribe(channel)
-        message = None
-        while message == None:
-            message = p.get_message()
-            if message and not message['data'] == 1:
-                message = message['data'].decode('utf-8')
-                send_frame_xbee(device, remote_device, message)
+        message = p.get_message()
+        if message and not message['data'] == 1:
+            message = message['data'].decode('utf-8')
+            send_frame_xbee(device, remote_device, message)
