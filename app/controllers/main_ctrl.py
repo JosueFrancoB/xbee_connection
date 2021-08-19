@@ -67,3 +67,4 @@ def receive_from_redis(device, remote_device):
             led1.off()
             relay.off()
             #send_frame_xbee(device, remote_device, message)
+
