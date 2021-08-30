@@ -78,17 +78,21 @@ def receive_from_redis(device):
                     requests.post(f'http://localhost:5000/ap/deactivate/{id}')
                     msg ='not permission'
                 if message == 'True':
-                    msg = '{02}'
+                    msg = '{020301}'
                     led1.on()
                     relay.on()
+                    send_frame_xbee(device, remote, msg)
                     sleep(3)
-                    requests.post(f'http://localhost:5000/ap/deactivate/{id}')
-                    led3.off()
-                    led2.off()
-                    led1.off()
-                    relay.off()
-                send_frame_xbee(device, remote, msg)
+                    msgoff='{020300}'
+                    r = requests.post(f'http://localhost:5000/ap/deactivate/{id}')
+                    if r.json():
+                        led3.off()
+                        led2.off()
+                        led1.off()
+                        relay.off()
+                        send_frame_xbee(device, remote, msgoff)
             elif message == 'Scan':
                 device.send_data_broadcast("{04}")
             else:
                 send_frame_xbee(device, remote, 'not registered device')
+                #todo reiniciar arduino depues de scanear
