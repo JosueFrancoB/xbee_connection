@@ -1,11 +1,12 @@
-from models.devices import RemoteDevice
 from digi.xbee.devices import XBeeDevice, RemoteXBeeDevice, XBee64BitAddress
 import redis
 from gpiozero.pins.native import NativeFactory
 from gpiozero import LED
 import gpiozero
 import os
+import requests
 from time import sleep
+
 factory = NativeFactory()
 
 led1 = LED(22,pin_factory=factory)
@@ -23,48 +24,71 @@ def validate_open_device(device):
 
 
 def send_frame_xbee(device, remote_device, data):
-    data = str(data.data.decode('utf8'))
+    rmt_device = RemoteXBeeDevice(device, XBee64BitAddress.from_hex_string(remote_device))
     if data != None:
-        device.send_data(remote_device, data)
+        device.send_data(rmt_device, data)
 
 
-def receive_frame_xbee(device, remote_device):
+def receive_frame_xbee(device):
     while True:
         data = None
-        data = device.read_data_from(remote_device)
+        data = device.read_data()
         if data != None:
-            print(data)
-            led3.on()
-            print("Reciving frame in xbee")
-            send_to_redis(data)
+            decode = data.data.decode('utf8')
+            global remote
+            remote = str(data.remote_device)
+            remote = remote[0:16]
+            if decode == "{0401}":
+                requests.get(f'http://172.19.0.4:5000/xbees/show/{remote}/4I4O')
+            if decode.startswith('{01'):
+                msg = decode
+                msg= msg[3:-1]
+                print(msg)
+                led3.on()
+                print("Reciving frame in xbee")
+                send_to_redis(msg)
+
+
 
 def send_to_redis(data):
     publisher = redis.Redis(host = 'redis', port = 6379)
-    message= data.data.decode('utf8')
+    message = data
     channel = "control"
-    send_message = message
-    publisher.publish(channel, send_message)
+    publisher.publish(channel, message)
     led2.on()
     print("Send msg to redis -xbee")
 
 
-def receive_from_redis(device, remote_device):
+def receive_from_redis(device):
     subscriber = redis.Redis(host = 'redis', port = 6379)
     channel = "test"
     p = subscriber.pubsub()
     p.subscribe(channel)
-
-
     while True:
         message = p.get_message()
-        if message != None:
-            print("Recieving redis response in xbee"+ str(message))
-            led1.on()
-            relay.on()
-            sleep(3)
-            led3.off()
-            led2.off()
-            led1.off()
-            relay.off()
-            #send_frame_xbee(device, remote_device, message)
-
+        if message and not message['data']==1:
+            message = message['data'].decode('utf-8')
+            if len(message) > 7:
+                data = message.split(',')
+                message = data[0]
+                id = data[1]
+                print("Recieving redis response in xbee"+ str(message))
+                msg = 'None'
+                if message == 'False':
+                    requests.post(f'http://localhost:5000/ap/deactivate/{id}')
+                    msg ='not permission'
+                if message == 'True':
+                    msg = '{02}'
+                    led1.on()
+                    relay.on()
+                    sleep(3)
+                    requests.post(f'http://localhost:5000/ap/deactivate/{id}')
+                    led3.off()
+                    led2.off()
+                    led1.off()
+                    relay.off()
+                send_frame_xbee(device, remote, msg)
+            elif message == 'Scan':
+                device.send_data_broadcast("{04}")
+            else:
+                send_frame_xbee(device, remote, 'not registered device')
