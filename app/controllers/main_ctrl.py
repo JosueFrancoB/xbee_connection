@@ -68,31 +68,41 @@ def receive_from_redis(device):
         message = p.get_message()
         if message and not message['data']==1:
             message = message['data'].decode('utf-8')
-            if len(message) > 7:
+            if len(message) > 9 and not message.startswith('rel-'):
                 data = message.split(',')
                 message = data[0]
                 id = data[1]
                 print("Recieving redis response in xbee"+ str(message))
                 msg = 'None'
+                rel = os.getenv('RELEVATOR')
                 if message == 'False':
+                    requests.post(f'http://localhost:5000/relevator/{rel}/0')
                     requests.post(f'http://localhost:5000/ap/deactivate/{id}')
                     msg ='not permission'
                 if message == 'True':
-                    msg = '{020301}'
-                    led1.on()
-                    relay.on()
-                    send_frame_xbee(device, remote, msg)
-                    sleep(3)
-                    msgoff='{020300}'
-                    r = requests.post(f'http://localhost:5000/ap/deactivate/{id}')
-                    if r.json():
+                    relevators = {'small1': '01', 'small2': '02', 'big1': '03', 'big2': '04'}
+                    if rel in relevators:
+                        msg = '{02'+relevators[rel]+'01}'
+                        led1.on()
+                        relay.on()
+                        send_frame_xbee(device, remote, msg)
+                        sleep(3)
+                        requests.post(f'http://localhost:5000/ap/deactivate/{id}')
                         led3.off()
                         led2.off()
                         led1.off()
                         relay.off()
-                        send_frame_xbee(device, remote, msgoff)
             elif message == 'Scan':
                 device.send_data_broadcast("{04}")
+            elif message.startswith('rel-'):
+                data = message.split('-')
+                os.environ['RELEVATOR'] = data[1]
+            elif message.startswith('{02'):
+                action = message[-3:]
+                if action == '01}':
+                    send_frame_xbee(device, remote, message)
+                elif action == '00}':
+                    send_frame_xbee(device, remote, message)
             else:
                 send_frame_xbee(device, remote, 'not registered device')
                 #todo reiniciar arduino depues de scanear
