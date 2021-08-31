@@ -6,6 +6,8 @@ services:
       build: .
       volumes:
         - /boot/firmware/:/app/config_host
+      environment:
+        - RELEVATOR=big1
 networks:
   default:
     external:
