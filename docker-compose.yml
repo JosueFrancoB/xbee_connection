@@ -3,13 +3,15 @@ services:
     frames:
       privileged: true
       container_name: xbee
+      networks: 
+        - redis_ac
       build: .
       volumes:
         - /boot/firmware/:/app/config_host
       environment:
         - RELEVATOR=big1
+        - BUTTON=big1
 networks:
-  default:
-    external:
-      name: ac
+  redis_ac:
+    external: true
 
