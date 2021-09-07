@@ -10,9 +10,9 @@ from time import sleep
 
 factory = NativeFactory()
 
-led1 = LED(22,pin_factory=factory)
-led2 = LED(27,pin_factory=factory)
-led3 = LED(17,pin_factory=factory)
+#led1 = LED(22,pin_factory=factory)
+#led2 = LED(27,pin_factory=factory)
+#led3 = LED(17,pin_factory=factory)
 relay_pin = 16
 relay = gpiozero.OutputDevice(relay_pin, active_high=True, initial_value=False, pin_factory=factory)
 
@@ -50,9 +50,26 @@ def receive_frame_xbee(device):
                     msg= msg[3:-1]
                     send_to_redis(msg)
                 if decode.startswith('{020'):
-                    rel_btn = os.getenv('BUTTON')
-                    if not rel_btn: rel_btn = 'big1'
-                    requests.post(f'http://{host}:5000/relevator/{rel_btn}/0')
+                    #rel_btn = os.getenv('BUTTON')
+                    in_value = decode[5]
+                    in_value = int(in_value) + 1
+                    action = decode[-2]
+                    #if not rel_btn: rel_btn = 'big1'
+                    data = requests.post(f'http://{host}:5000/in/in{str(in_value)}')
+                    if data.status_code == 200:
+                        resp = data.json()
+                        pin = resp['pin']
+                        action = resp['action']
+                        if not pin.__contains__('A'):
+                            led = ''
+                            led = LED(int(pin),pin_factory=factory)
+                        if action == '00':
+                            led.off()
+                        elif action == '01':
+                            led.on()
+                        else:
+                            act = action[-1]
+                            requests.post(f'http://{host}:5000/relevator/{pin}/{act}')
             else:
                 print('The xbee container must be initialized first')
 
@@ -61,14 +78,16 @@ def send_to_redis(data):
     message = data
     channel = "control"
     publisher.publish(channel, message)
-    led2.on()
-
 
 def receive_from_redis(device):
-    subscriber = redis.Redis(host = 'redis', port = 6379)
-    channel = "test"
-    p = subscriber.pubsub()
-    p.subscribe(channel)
+    try:
+        subscriber = redis.Redis(host = 'redis', port = 6379)
+        channel = "test"
+        p = subscriber.pubsub()
+        p.subscribe(channel)
+    except redis.exceptions.ConnectionError:
+        print("\n Error al conectarse a redis \n")
+        return
     host = ''
     while True:
         message = p.get_message()
@@ -83,14 +102,14 @@ def receive_from_redis(device):
                     data = message.split(',')
                     message, id = data[0], data[1]
                     msg = 'None'
-                    rel = os.getenv('RELEVATOR')
-                    if not rel: rel='big1'
+                    #rel = os.getenv('RELEVATOR')
+                    rel='A3'
                     if message == 'False':
                         requests.post(f'http://{host}:5000/relevator/{rel}/0')
                         requests.post(f'http://{host}:5000/ap/deactivate/{id}')
                         msg = 'not permission'
                     if message == 'True':
-                        relevators = {'small1': '01', 'small2': '02', 'big1': '03', 'big2': '04'}
+                        relevators = {'A3': '01', 'A2': '02', 'A1': '03', 'A0': '04'}
                         if rel in relevators:
                             msg = '{02'+relevators[rel]+'01}'
                             #try:
@@ -98,7 +117,7 @@ def receive_from_redis(device):
                             sleep(3)
                             requests.post(f'http://{host}:5000/ap/deactivate/{id}')
                             #except:
-                                #print('error transmit xbees')
+                            #  print('error transmit xbees')
                 elif message == 'Scan':
                     device.send_data_broadcast("{04}")
                 elif message.startswith('reg'):
@@ -121,6 +140,5 @@ def receive_from_redis(device):
                             print('not remote device identified')
                 else:
                     device.send_data_broadcast('not device registered, please scan')
-                    #todo: please restart raspberry after scan
             else:
                 print('xbee container must be start first')
