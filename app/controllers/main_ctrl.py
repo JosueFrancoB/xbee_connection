@@ -53,23 +53,28 @@ def receive_frame_xbee(device):
                     #rel_btn = os.getenv('BUTTON')
                     in_value = decode[5]
                     in_value = int(in_value) + 1
-                    action = decode[-2]
                     #if not rel_btn: rel_btn = 'big1'
-                    data = requests.post(f'http://{host}:5000/in/in{str(in_value)}')
+                    data = requests.get(f'http://{host}:5000/in/in{str(in_value)}')
                     if data.status_code == 200:
                         resp = data.json()
-                        pin = resp['pin']
-                        action = resp['action']
-                        if not pin.__contains__('A'):
-                            led = ''
-                            led = LED(int(pin),pin_factory=factory)
-                        if action == '00':
-                            led.off()
-                        elif action == '01':
-                            led.on()
-                        else:
-                            act = action[-1]
-                            requests.post(f'http://{host}:5000/relevator/{pin}/{act}')
+                        # n_elements = len(resp)
+                        for obj in resp['routine']:
+                            pin = obj['pin']
+                            action = obj['action']
+                            if not pin.__contains__('A'):
+                                led = ''
+                                led = LED(int(pin),pin_factory=factory)
+                                if action == '00':
+                                    led.off()
+                                elif action == '01':
+                                    led.on()
+                            else:
+                                if action.startswith('02'):
+                                    new_action = action[0:2]
+                                    time = action[2::]
+                                    requests.post(f'http://{host}:5000/relevator/{pin}/{new_action}/{time}')
+                                else:
+                                    requests.post(f'http://{host}:5000/relevator/{pin}/{new_action}')
             else:
                 print('The xbee container must be initialized first')
 
@@ -124,8 +129,6 @@ def receive_from_redis(device):
                     data = message.split('-')
                     if data[1] == 'rel':
                         os.environ['RELEVATOR'] = data[2]
-                    elif data[1] == 'btn':
-                        os.environ['BUTTON'] = data[2]
                 elif message.startswith('{02'):
                     action = message[-3:]
                     if action == '01}':
