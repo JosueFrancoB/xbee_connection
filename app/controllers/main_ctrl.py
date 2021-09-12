@@ -50,14 +50,11 @@ def receive_frame_xbee(device):
                     msg= msg[3:-1]
                     send_to_redis(msg)
                 if decode.startswith('{020'):
-                    #rel_btn = os.getenv('BUTTON')
                     in_value = decode[5]
                     in_value = int(in_value) + 1
-                    #if not rel_btn: rel_btn = 'big1'
                     data = requests.get(f'http://{host}:5000/in/in{str(in_value)}')
                     if data.status_code == 200:
                         resp = data.json()
-                        # n_elements = len(resp)
                         for obj in resp['routine']:
                             pin = obj['pin']
                             action = obj['action']
@@ -72,9 +69,12 @@ def receive_frame_xbee(device):
                                 if action.startswith('02'):
                                     new_action = action[0:2]
                                     time = action[2::]
+                                    activate = '{02'+pin+new_action+time+'}'
                                     requests.post(f'http://{host}:5000/relevator/{pin}/{new_action}/{time}')
                                 else:
-                                    requests.post(f'http://{host}:5000/relevator/{pin}/{new_action}')
+                                    activate = '{02'+pin+action+'}'
+                                    send_frame_xbee(device, remote, activate)
+                                    requests.post(f'http://{host}:5000/relevator/{pin}/{action}')
             else:
                 print('The xbee container must be initialized first')
 
@@ -103,44 +103,51 @@ def receive_from_redis(device):
                 host = ip_host[1]
                 os.environ['HOST'] = ip_host[1]
             if host and host != '':
-                if len(message) > 9 and not message.startswith('reg') and not message.startswith('host'):
+                if len(message) > 12 and not message.startswith('host'):
                     data = message.split(',')
-                    message, id = data[0], data[1]
-                    msg = 'None'
-                    #rel = os.getenv('RELEVATOR')
-                    rel='A3'
+                    message, id, key = data[0], data[1], data [2]
                     if message == 'False':
-                        requests.post(f'http://{host}:5000/relevator/{rel}/0')
+                        # requests.post(f'http://{host}:5000/relevator/{rel}/0')
                         requests.post(f'http://{host}:5000/ap/deactivate/{id}')
-                        msg = 'not permission'
                     if message == 'True':
-                        relevators = {'A3': '01', 'A2': '02', 'A1': '03', 'A0': '04'}
-                        if rel in relevators:
-                            msg = '{02'+relevators[rel]+'01}'
-                            #try:
-                            send_frame_xbee(device,remote,msg)
-                            sleep(3)
-                            requests.post(f'http://{host}:5000/ap/deactivate/{id}')
-                            #except:
-                            #  print('error transmit xbees')
+                        data = requests.get(f'http://{host}:5000/rfid_device/routine/{key}')
+                        if data.status_code == 200:
+                            resp = data.json()
+                            for obj in resp['routine']:
+                                pin = obj['pin']
+                                action = obj['action']
+                                if not pin.__contains__('A'):
+                                    led = ''
+                                    led = LED(int(pin),pin_factory=factory)
+                                    if action == '00':
+                                        led.off()
+                                    elif action == '01':
+                                        led.on()
+                                else:
+                                    relevators = {'A3': '01', 'A2': '02','A1': '03','A0': '04'}
+                                    if pin in relevators:
+                                        pin = relevators[pin]
+                                        if action.startswith('02'):
+                                            new_action = action[0:2]
+                                            time = action[2::]
+                                            activate = '{02'+pin+new_action+time+'}'
+                                            send_frame_xbee(device, remote, activate)
+                                            requests.post(f'http://{host}:5000/ap/deactivate/{id}')
+                                        else:
+                                            activate = '{02'+pin+action+'}'
+                                            send_frame_xbee(device, remote, activate)
+                                            requests.post(f'http://{host}:5000/ap/deactivate/{id}')
                 elif message == 'Scan':
                     device.send_data_broadcast("{04}")
-                elif message.startswith('reg'):
-                    data = message.split('-')
-                    if data[1] == 'rel':
-                        os.environ['RELEVATOR'] = data[2]
                 elif message.startswith('{02'):
-                    action = message[-3:]
-                    if action == '01}':
-                        try:
+                    if message[5:7] != '02':
+                        action = message[-3:]
+                        if action == '01}':
                             send_frame_xbee(device, remote, message)
-                        except:
-                            print('not remote device identified')
-                    elif action == '00}':
-                        try:
+                        elif action == '00}':
                             send_frame_xbee(device, remote, message)
-                        except:
-                            print('not remote device identified')
+                    else:
+                        send_frame_xbee(device, remote, message)
                 else:
                     device.send_data_broadcast('not device registered, please scan')
             else:
