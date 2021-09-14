@@ -1,22 +1,12 @@
 import redis
-from digi.xbee.devices import XBeeDevice, RemoteXBeeDevice, XBee64BitAddress
+from digi.xbee.devices import RemoteXBeeDevice, XBee64BitAddress
 from gpiozero.pins.native import NativeFactory
 from gpiozero import LED
-import gpiozero
-import re
 import os
 import requests
-from time import sleep
 
 factory = NativeFactory()
 
-#led1 = LED(22,pin_factory=factory)
-#led2 = LED(27,pin_factory=factory)
-#led3 = LED(17,pin_factory=factory)
-relay_pin = 16
-relay = gpiozero.OutputDevice(relay_pin, active_high=True, initial_value=False, pin_factory=factory)
-
-#host = ''
 
 def validate_open_device(device):
     try:
@@ -29,8 +19,10 @@ def validate_open_device(device):
 def send_frame_xbee(device, remote_device, data):
     rmt_device = RemoteXBeeDevice(device, XBee64BitAddress.from_hex_string(remote_device))
     if data != None:
-        device.send_data(rmt_device, data)
-
+        try:
+            device.send_data(rmt_device, data)
+        except:
+            print('Send message error')
 
 def receive_frame_xbee(device):
     while True:
@@ -44,44 +36,48 @@ def receive_frame_xbee(device):
             host = os.getenv('HOST')
             if host and host != '':
                 if decode == "{0401}":
-                    requests.get(f'http://{host}:5000/xbees/show/{remote}/4I4O')
+                    send_to_redis(f'Scaned,{remote},4I4O', 'scan')
                 if decode.startswith('{01'):
                     msg = decode
                     msg= msg[3:-1]
-                    send_to_redis(msg)
+                    send_to_redis(msg, 'control')
                 if decode.startswith('{020'):
-                    in_value = decode[5]
-                    in_value = int(in_value) + 1
-                    data = requests.get(f'http://{host}:5000/in/in{str(in_value)}')
-                    if data.status_code == 200:
-                        resp = data.json()
-                        for obj in resp['routine']:
-                            pin = obj['pin']
-                            action = obj['action']
-                            if not pin.__contains__('A'):
-                                led = ''
-                                led = LED(int(pin),pin_factory=factory)
-                                if action == '00':
-                                    led.off()
-                                elif action == '01':
-                                    led.on()
-                            else:
-                                if action.startswith('02'):
-                                    new_action = action[0:2]
-                                    time = action[2::]
-                                    activate = '{02'+pin+new_action+time+'}'
-                                    requests.post(f'http://{host}:5000/relevator/{pin}/{new_action}/{time}')
+                    in_value = decode[4]
+                    estado = decode[6]
+                    if estado == '1':
+                        data = requests.get(f'http://{host}:5000/in/in{str(in_value)}')
+                        if data.status_code == 200:
+                            resp = data.json()
+                            for obj in resp['routine']:
+                                pin = obj['pin']
+                                action = obj['action']
+                                if not pin.__contains__('R'):
+                                    led = ''
+                                    led = LED(int(pin),pin_factory=factory)
+                                    if action == '00':
+                                        led.off()
+                                    elif action == '01':
+                                        led.on()
+                                    elif action == '02':
+                                        time = action[2::]
+                                        time = float(time)
+                                        time /= 1000
+                                        led.on_time(time)
+                                    elif action == '03':
+                                        led.toggle()
                                 else:
-                                    activate = '{02'+pin+action+'}'
-                                    send_frame_xbee(device, remote, activate)
-                                    requests.post(f'http://{host}:5000/relevator/{pin}/{action}')
+                                    if action.startswith('02'):
+                                        new_action = action[0:2]
+                                        time = action[2::]
+                                        requests.post(f'http://{host}:5000/relevator/{pin}/{new_action}/{time}')
+                                    else:
+                                        requests.post(f'http://{host}:5000/relevator/{pin}/{action}')
             else:
                 print('The xbee container must be initialized first')
 
-def send_to_redis(data):
+def send_to_redis(data, channel):
     publisher = redis.Redis(host = 'redis', port = 6379)
     message = data
-    channel = "control"
     publisher.publish(channel, message)
 
 def receive_from_redis(device):
@@ -107,7 +103,6 @@ def receive_from_redis(device):
                     data = message.split(',')
                     message, id, key = data[0], data[1], data [2]
                     if message == 'False':
-                        # requests.post(f'http://{host}:5000/relevator/{rel}/0')
                         requests.post(f'http://{host}:5000/ap/deactivate/{id}')
                     if message == 'True':
                         data = requests.get(f'http://{host}:5000/rfid_device/routine/{key}')
@@ -116,38 +111,55 @@ def receive_from_redis(device):
                             for obj in resp['routine']:
                                 pin = obj['pin']
                                 action = obj['action']
-                                if not pin.__contains__('A'):
+                                if not pin.__contains__('R'):
                                     led = ''
                                     led = LED(int(pin),pin_factory=factory)
                                     if action == '00':
                                         led.off()
                                     elif action == '01':
                                         led.on()
+                                    elif action == '02':
+                                        time = action[2::]
+                                        time = float(time)
+                                        time /= 1000
+                                        led.on_time(time)
+                                    elif action == '03':
+                                        led.toggle()
                                 else:
-                                    relevators = {'A3': '01', 'A2': '02','A1': '03','A0': '04'}
+                                    relevators = {'R1': '01', 'R2': '02','R3': '03','R4': '04'}
                                     if pin in relevators:
                                         pin = relevators[pin]
                                         if action.startswith('02'):
                                             new_action = action[0:2]
                                             time = action[2::]
                                             activate = '{02'+pin+new_action+time+'}'
-                                            send_frame_xbee(device, remote, activate)
-                                            requests.post(f'http://{host}:5000/ap/deactivate/{id}')
+                                            try:
+                                                send_frame_xbee(device, remote, activate)
+                                                requests.post(f'http://{host}:5000/ap/deactivate/{id}')
+                                            except:
+                                                print('Scan first')
                                         else:
                                             activate = '{02'+pin+action+'}'
-                                            send_frame_xbee(device, remote, activate)
-                                            requests.post(f'http://{host}:5000/ap/deactivate/{id}')
+                                            try:
+                                                send_frame_xbee(device, remote, activate)
+                                                requests.post(f'http://{host}:5000/ap/deactivate/{id}')
+                                            except:
+                                                print('Scan first')
                 elif message == 'Scan':
                     device.send_data_broadcast("{04}")
                 elif message.startswith('{02'):
                     if message[5:7] != '02':
                         action = message[-3:]
-                        if action == '01}':
-                            send_frame_xbee(device, remote, message)
-                        elif action == '00}':
-                            send_frame_xbee(device, remote, message)
+                        if action == '00}' or action == '01}' or action == '03}':
+                            try:
+                                send_frame_xbee(device, remote, message)
+                            except:
+                                print('Scan first')
                     else:
-                        send_frame_xbee(device, remote, message)
+                        try:
+                            send_frame_xbee(device, remote, message)
+                        except:
+                                print('Scan first')
                 else:
                     device.send_data_broadcast('not device registered, please scan')
             else:
