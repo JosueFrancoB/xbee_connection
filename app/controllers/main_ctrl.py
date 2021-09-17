@@ -102,8 +102,8 @@ def receive_from_redis(device):
                 if len(message) > 12 and not message.startswith('host'):
                     data = message.split(',')
                     message, id, key = data[0], data[1], data [2]
-                    if message == 'False':
-                        requests.post(f'http://{host}:5000/ap/deactivate/{id}')
+                    #if message == 'False':
+                        #requests.post(f'http://{host}:5000/ap/deactivate/{id}')
                     if message == 'True':
                         data = requests.get(f'http://{host}:5000/rfid_device/routine/{key}')
                         if data.status_code == 200:
@@ -135,14 +135,14 @@ def receive_from_redis(device):
                                             activate = '{02'+pin+new_action+time+'}'
                                             try:
                                                 send_frame_xbee(device, remote, activate)
-                                                requests.post(f'http://{host}:5000/ap/deactivate/{id}')
+                                                #requests.post(f'http://{host}:5000/ap/deactivate/{id}')
                                             except:
                                                 print('Scan first')
                                         else:
                                             activate = '{02'+pin+action+'}'
                                             try:
                                                 send_frame_xbee(device, remote, activate)
-                                                requests.post(f'http://{host}:5000/ap/deactivate/{id}')
+                                                #requests.post(f'http://{host}:5000/ap/deactivate/{id}')
                                             except:
                                                 print('Scan first')
                 elif message == 'Scan':
