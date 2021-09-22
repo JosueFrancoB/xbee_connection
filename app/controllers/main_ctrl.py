@@ -1,12 +1,15 @@
 import redis
-from digi.xbee.devices import RemoteXBeeDevice, XBee64BitAddress
-from gpiozero.pins.native import NativeFactory
+import logging
 from gpiozero import LED
-import os
-import requests
+from gpiozero.pins.native import NativeFactory
+from digi.xbee.devices import RemoteXBeeDevice, XBee64BitAddress
 
 factory = NativeFactory()
 
+log = logging.getLogger('xbee')
+console = logging.StreamHandler()
+log.addHandler(console)
+log.setLevel(logging.INFO)
 
 def validate_open_device(device):
     try:
@@ -14,6 +17,21 @@ def validate_open_device(device):
             device.open()
     except:
         print("Please restart your RaspBerry to apply app configurations")
+
+
+def GetRedisConnection():
+    r = None
+    try:
+        r = redis.Redis(host='redis', port=6379, decode_responses=True)
+        # if r.ping():
+            # log.info(colorize(f"Redis connection established on {redisConf['host']}", ['green']))print("hola")
+    except Exception as e:
+        r= None
+        #log.info(colorize(f"Could not connect to redis server on {redisConf['host']}", ['orange']))
+        #log.error(e)
+        #print("hola")
+    return r
+
 
 
 def send_frame_xbee(device, remote_device, data):
@@ -33,134 +51,83 @@ def receive_frame_xbee(device):
             global remote
             remote = str(data.remote_device)
             remote = remote[0:16]
-            host = os.getenv('HOST')
-            if host and host != '':
-                if decode == "{0401}":
-                    send_to_redis(f'Scaned,{remote},4I4O', 'scan')
-                if decode.startswith('{01'):
-                    msg = decode
-                    msg= msg[3:-1]
-                    send_to_redis(msg, 'control')
-                if decode.startswith('{020'):
-                    in_value = decode[4]
-                    estado = decode[6]
-                    if estado == '1':
-                        data = requests.get(f'http://{host}:5000/in/in{str(in_value)}')
-                        if data.status_code == 200:
-                            resp = data.json()
-                            for obj in resp['routine']:
-                                pin = obj['pin']
-                                action = obj['action']
-                                if not pin.__contains__('R'):
-                                    led = ''
-                                    led = LED(int(pin),pin_factory=factory)
-                                    if action == '00':
-                                        led.off()
-                                    elif action == '01':
-                                        led.on()
-                                    elif action == '02':
-                                        time = action[2::]
-                                        time = float(time)
-                                        time /= 1000
-                                        led.on_time(time)
-                                    elif action == '03':
-                                        led.toggle()
-                                else:
-                                    if action.startswith('02'):
-                                        new_action = action[0:2]
-                                        time = action[2::]
-                                        requests.post(f'http://{host}:5000/relevator/{pin}/{new_action}/{time}')
-                                    else:
-                                        requests.post(f'http://{host}:5000/relevator/{pin}/{action}')
-            else:
-                print('The xbee container must be initialized first')
+            if decode == "{0401}":
+                send_to_redis(f'Scaned,{remote},4I4O', 'scan_event')
+            if decode.startswith('{01'):
+                send_to_redis(decode, 'cards_event')
+            if decode.startswith('{020'):
+                send_to_redis(decode, 'inputs_event')
 
-def send_to_redis(data, channel):
-    publisher = redis.Redis(host = 'redis', port = 6379)
-    message = data
-    publisher.publish(channel, message)
+def send_to_redis(data,stream_name):    
+    try:
+        r= GetRedisConnection()
+        if r:
+            #stream_data = GetStreamData(event_key)
+            stream =  'xbee.' + stream_name
+            maxlen=  200
+            if stream:
+                r.xadd(stream, {"data": data}, maxlen=maxlen, approximate=True)
+    except Exception as e:
+        # log.error(e)
+        pass
 
 def receive_from_redis(device):
-    try:
-        subscriber = redis.Redis(host = 'redis', port = 6379)
-        channel = "test"
-        p = subscriber.pubsub()
-        p.subscribe(channel)
-    except redis.exceptions.ConnectionError:
-        print("\n Error al conectarse a redis \n")
-        return
-    host = ''
-    while True:
-        message = p.get_message()
-        if message and not message['data']==1:
-            message = message['data'].decode('utf-8')
-            if message.startswith('host'):
-                ip_host = message.split(':')
-                host = ip_host[1]
-                os.environ['HOST'] = ip_host[1]
-            if host and host != '':
-                if len(message) > 12 and not message.startswith('host'):
-                    data = message.split(',')
-                    message, id, key = data[0], data[1], data [2]
-                    #if message == 'False':
-                        #requests.post(f'http://{host}:5000/ap/deactivate/{id}')
-                    if message == 'True':
-                        data = requests.get(f'http://{host}:5000/rfid_device/routine/{key}')
-                        if data.status_code == 200:
-                            resp = data.json()
-                            for obj in resp['routine']:
-                                pin = obj['pin']
-                                action = obj['action']
-                                if not pin.__contains__('R'):
-                                    led = ''
-                                    led = LED(int(pin),pin_factory=factory)
-                                    if action == '00':
-                                        led.off()
-                                    elif action == '01':
-                                        led.on()
-                                    elif action == '02':
-                                        time = action[2::]
-                                        time = float(time)
-                                        time /= 1000
-                                        led.on_time(time)
-                                    elif action == '03':
-                                        led.toggle()
-                                else:
-                                    relevators = {'R1': '01', 'R2': '02','R3': '03','R4': '04'}
-                                    if pin in relevators:
-                                        pin = relevators[pin]
-                                        if action.startswith('02'):
-                                            new_action = action[0:2]
-                                            time = action[2::]
-                                            activate = '{02'+pin+new_action+time+'}'
-                                            try:
-                                                send_frame_xbee(device, remote, activate)
-                                                #requests.post(f'http://{host}:5000/ap/deactivate/{id}')
-                                            except:
-                                                print('Scan first')
-                                        else:
-                                            activate = '{02'+pin+action+'}'
-                                            try:
-                                                send_frame_xbee(device, remote, activate)
-                                                #requests.post(f'http://{host}:5000/ap/deactivate/{id}')
-                                            except:
-                                                print('Scan first')
-                elif message == 'Scan':
-                    device.send_data_broadcast("{04}")
-                elif message.startswith('{02'):
-                    if message[5:7] != '02':
-                        action = message[-3:]
-                        if action == '00}' or action == '01}' or action == '03}':
-                            try:
-                                send_frame_xbee(device, remote, message)
-                            except:
-                                print('Scan first')
-                    else:
-                        try:
-                            send_frame_xbee(device, remote, message)
-                        except:
-                                print('Scan first')
+    events_to_listen = [
+        'access_control.scan_event', 
+        'access_control.relevator_event',
+        'access_control.rasp_event']
+    streams = {}
+    r= GetRedisConnection()
+    if r:
+        for event in events_to_listen:
+            lastid = r.get(event['lastid_key'])
+            if not lastid:
+                xrev_result = r.xrevrange(event, count=1)
+                log.info(f'xrev_result: {xrev_result}')
+                if len(xrev_result) > 0:
+                    lastid = xrev_result[0][0]
                 else:
-                    device.send_data_broadcast('not device registered, please scan')
+                    lastid = '0-0'
+            streams[event] = lastid
+    r.close()
+    while True:
+        try:
+            r = GetRedisConnection()
+            if r:
+                xread_result = r.xread(streams, None, 0)
+                if not len(xread_result) == 0:
+                    for stream_result in xread_result:
+                        if not len(stream_result) == 0:
+                            lastid_key = stream_result[0]
+                            for event in stream_result[1]:
+                                [event_id, event_data] = event
+                                r.set(lastid_key, event_id)
+                                streams[stream_result[0]] = event_id
+                                analize_stream(event_data['data'],stream_result[0], device)
             else:
-                print('xbee container must be start first')
+                time.sleep(2)
+        except Exception as e:
+            print(f"{e}")
+
+
+def analize_stream(data, stream, device):
+    if stream == 'access_control.relevator_event':
+        send_frame_xbee(device, remote, data)
+    if stream == 'access_control.rasp_event':
+        data = data.split(',')
+        action, pin = data[0], data[1]
+        led = ''
+        led = LED(int(pin),pin_factory=factory)
+        if action == '00':
+            led.off()
+        elif action == '01':
+            led.on()
+        elif action == '02':
+            time = action[2::]
+            time = float(time)
+            time /= 1000
+            led.on_time(time)
+        elif action == '03':
+            led.toggle()
+    if stream == 'access_control.scan_event':
+        device.send_data_broadcast("{04}")
